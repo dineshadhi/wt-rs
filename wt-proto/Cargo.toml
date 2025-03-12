@@ -1,0 +1,12 @@
+[package]
+name = "wt-proto"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+quinn-proto = {"workspace" = true}
+quinn = {"workspace" = true }
+thiserror = {"workspace" = true}
+bytes = {"workspace" = true}
+async-trait = {"workspace" = true}
+tracing = {"workspace" = true}
