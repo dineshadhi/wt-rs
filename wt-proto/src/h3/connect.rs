@@ -49,6 +49,8 @@ impl Request {
         let mut buffer = BytesMut::new();
         Frame::HEADERS.encode(&mut buffer, fdata);
 
+        tracing::debug!("[H3 Reponse][{:?}]", headers);
+
         self.writer.write_all(&buffer).await?;
         Ok(())
     }

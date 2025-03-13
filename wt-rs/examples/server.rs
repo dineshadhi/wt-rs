@@ -13,9 +13,12 @@ use std::{
     time::{self, Duration},
 };
 
-use quinn::crypto::rustls::{HandshakeData, QuicServerConfig};
+use quinn::{
+    crypto::rustls::{HandshakeData, QuicServerConfig},
+    TokioRuntime,
+};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
-use tokio::time::sleep;
+use tokio::time::{sleep, Sleep};
 use tracing_subscriber::{filter::LevelParseError, fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 use wt_proto::h3;
 
@@ -84,7 +87,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     // let server_config = load_certs(certpath.join("key.der"), certpath.join("cert.der"))?;
     let server_config = load_certs(certpath.join("key.pem"), certpath.join("cert.pem"))?;
-    let listenaddr = "0.0.0.0:4433".parse().unwrap();
+    let listenaddr = "[::]:4433".parse().unwrap();
 
     let endpoint = quinn::Endpoint::server(server_config, listenaddr)?;
 
@@ -115,7 +118,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 }
             };
 
-            // let _rs = moqconn.accept_uni().await?;
+            loop {
+                let rs = moqconn.accept_uni().await?;
+                tracing::debug!("{:?}", rs);
+            }
         }
     }
 

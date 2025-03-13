@@ -20,10 +20,14 @@ pub enum CodingError {
     VarIntBoundsExceeded(#[from] VarIntBoundsExceeded),
 }
 
-// Convenient trait to handle both quinn::RecvStream and BytesMut to read varint and data
+/// VarInt is an encoding technique to store integers according to their size. Smaller values takes less bytes, larger value takes more.
+/// They form the basic blocks of any QUIC based protocols.
+/// This convinient extension helps decoding the VarInt directly from a quinn::RecvStream and a Buf.
 #[async_trait]
 pub trait VarIntExt {
+    /// Reads VarInt
     async fn read_varint(&mut self) -> Result<VarInt, CodingError>;
+    /// Reads exact data of length `len`
     async fn read_len(&mut self, len: usize) -> Result<Bytes, CodingError>;
 }
 
@@ -47,16 +51,16 @@ impl VarIntExt for quinn::RecvStream {
         // Tag is first 2 bits of the u8. Tag gives us the number of bytes occupied by the VarInt.
         let tag = buf[0] >> 6;
 
-        // Tag(0b00) -> 1
-        // Tag(0b01) -> 2
-        // Tag(0b10) -> 4
-        // Tag(0b11) -> 8
+        // Tag(0b00) -> 1 bytes
+        // Tag(0b01) -> 2 bytes
+        // Tag(0b10) -> 4 bytes
+        // Tag(0b11) -> 8 bytes
 
         // Remove the tag bits from the original buf
         buf[0] &= 0b0011_1111;
 
         // Read the remaining bytes based on the tag and compute U64
-        let val = match tag {
+        let val: u64 = match tag {
             0b00 => u64::from(buf[0]),
             0b01 => {
                 self.read_exact(&mut buf[1..2]).await?;
@@ -75,8 +79,7 @@ impl VarIntExt for quinn::RecvStream {
             }
         };
 
-        // Unwrapping here because we compute the u64
-        Ok(VarInt::from_u64(val).unwrap())
+        Ok(VarInt::from_u64(val)?)
     }
 }
 

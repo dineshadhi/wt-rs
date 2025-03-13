@@ -20,6 +20,11 @@ unistream! {
 }
 
 impl UniStream {
+    // Poll simply reads the type of already accepted quinn::RecvStream
+    pub async fn poll(mut s: quinn::RecvStream) -> Result<(UniStream, quinn::RecvStream), H3Error> {
+        Ok((UniStream(s.read_varint().await?), s))
+    }
+
     pub async fn accept(conn: &mut quinn::Connection) -> Result<(UniStream, quinn::RecvStream), H3Error> {
         let mut stream = conn.accept_uni().await?;
         let stype = UniStream(stream.read_varint().await?);
