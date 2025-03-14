@@ -1,5 +1,8 @@
-server :
-    RUST_BACKTRACE=true RUST_LOG=debug cargo run --example server
+default :
+    just --list
+    
+run module : 
+    RUST_BACKTRACE=true RUST_LOG=debug cargo run --example {{module}}
 
 cert : 
     mkdir -p cert

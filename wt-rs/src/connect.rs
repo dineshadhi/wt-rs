@@ -1,3 +1,4 @@
+use quinn::VarInt;
 use wt_proto::h3::{self, qpack};
 
 use crate::WTError;
@@ -17,6 +18,10 @@ impl Connect {
         request.ok().await?;
 
         Ok(Connect { inner: request })
+    }
+
+    pub fn session_id(&self) -> VarInt {
+        VarInt::from(self.inner.writer.id())
     }
 
     pub fn headers(&self) -> &qpack::Headers {

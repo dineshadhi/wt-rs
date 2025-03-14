@@ -6,7 +6,7 @@ use super::{qpack, H3Error};
 
 #[derive(Debug)]
 pub struct Request {
-    writer: quinn::SendStream,
+    pub writer: quinn::SendStream,
     #[allow(dead_code)]
     reader: quinn::RecvStream,
     pub headers: qpack::Headers,

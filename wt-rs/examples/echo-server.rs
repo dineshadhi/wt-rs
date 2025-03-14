@@ -106,7 +106,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             let alpn = match conn.handshake_data().unwrap().downcast_ref::<HandshakeData>() {
                 Some(hsdata) => hsdata.protocol.to_owned().unwrap(),
                 None => {
-                    panic!("Handshake Data Error");
+                    panic!("Hanshake Data cannot be found");
                 }
             };
 
@@ -117,14 +117,26 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 }
             };
 
-            loop {
-                let mut rs = moqconn.accept_uni().await?;
-                let d = rs.read_chunk(usize::MAX, true).await.unwrap().unwrap().bytes;
-                tracing::debug!("Received - {}", String::from_utf8_lossy(&d[..]));
+            let mut conn = moqconn.clone();
 
-                let mut send = moqconn.open_uni().await?;
-                send.write_all(&d[..]).await?;
-            }
+            tokio::spawn(async move {
+                loop {
+                    let data = moqconn.read_datagram().await.unwrap();
+                    tracing::debug!("Received - {}", String::from_utf8_lossy(&data[..]));
+                    moqconn.send_datagram(data).await.unwrap();
+                }
+            });
+
+            tokio::spawn(async move {
+                loop {
+                    let mut rs = conn.accept_uni().await.unwrap();
+                    let d = rs.read_chunk(usize::MAX, true).await.unwrap().unwrap().bytes;
+                    tracing::debug!("Received - {}", String::from_utf8_lossy(&d[..]));
+
+                    let mut send = conn.open_uni().await.unwrap();
+                    send.write_all(&d[..]).await.unwrap();
+                }
+            });
         }
     }
 
