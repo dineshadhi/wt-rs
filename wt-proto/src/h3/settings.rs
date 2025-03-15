@@ -149,9 +149,10 @@ impl Settings {
     }
 
     pub async fn open(mut conn: quinn::Connection, settings: Settings) -> Result<quinn::SendStream, H3Error> {
-        let (mut buffer, mut cs) = UniStream::CONTROL.open(&mut conn).await?;
+        let mut cs = UniStream::CONTROL.open(&mut conn).await?;
         let (_, fdata) = settings.encode();
 
+        let mut buffer = BytesMut::new();
         Frame::SETTINGS.encode(&mut buffer, fdata);
 
         tracing::debug!("[Sending Settings][{:?}]", settings);

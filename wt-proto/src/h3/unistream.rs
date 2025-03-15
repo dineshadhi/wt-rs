@@ -3,7 +3,7 @@ use bytes::{BufMut, BytesMut};
 use quinn::VarInt;
 use quinn_proto::coding::BufMutExt;
 
-#[derive(PartialEq, Eq, Debug)]
+#[derive(PartialEq, Eq, Debug, Clone)]
 pub struct UniStream(pub VarInt);
 
 macro_rules! unistream {
@@ -34,16 +34,17 @@ impl UniStream {
         Ok((stype, stream))
     }
 
-    pub async fn open(&self, conn: &mut quinn::Connection) -> Result<(BytesMut, quinn::SendStream), H3Error> {
+    pub async fn open(&self, conn: &mut quinn::Connection) -> Result<quinn::SendStream, H3Error> {
         let mut buffer = BytesMut::new();
         self.encode(&mut buffer);
 
-        let stream = conn.open_uni().await?;
+        let mut stream = conn.open_uni().await?;
+        stream.write_all(&buffer[..]).await?;
 
-        Ok((buffer, stream))
+        Ok(stream)
     }
 
-    fn encode<B: BufMut>(&self, buffer: &mut B) {
+    pub fn encode<B: BufMut>(&self, buffer: &mut B) {
         buffer.write_var(self.0.into_inner());
     }
 }

@@ -130,7 +130,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             tokio::spawn(async move {
                 loop {
                     let mut rs = conn.accept_uni().await.unwrap();
-                    let d = rs.read_chunk(usize::MAX, true).await.unwrap().unwrap().bytes;
+                    let d = rs.read_chunk().await.unwrap().unwrap().bytes;
                     tracing::debug!("Received - {}", String::from_utf8_lossy(&d[..]));
 
                     let mut send = conn.open_uni().await.unwrap();

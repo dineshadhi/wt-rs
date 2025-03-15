@@ -1,16 +1,16 @@
 use std::{future::Future, pin::Pin, sync::Arc};
 
+use crate::{
+    connect::Connect,
+    settings::Settings,
+    streams::{ReadStream, WriteStream},
+    WTError,
+};
 use bytes::Bytes;
 use futures::{stream::FuturesUnordered, StreamExt};
 use quinn::VarInt;
 use tokio::sync::Mutex;
-use wt_proto::{
-    coding::VarIntExt,
-    coding::VarIntMutExt,
-    h3::{unistream::UniStream, H3Error},
-};
-
-use crate::{connect::Connect, settings::Settings, WTError};
+use wt_proto::h3::unistream::UniStream;
 
 #[derive(Clone)]
 pub struct Connection {
@@ -44,22 +44,21 @@ impl Connection {
         Ok(conn)
     }
 
-    pub async fn accept_uni(&mut self) -> Result<quinn::RecvStream, WTError> {
+    pub async fn accept_uni(&mut self) -> Result<ReadStream, WTError> {
         match self.accept.to_owned() {
             Some(a) => a.lock().await.accept_uni().await,
-            None => Ok(self.inner.accept_uni().await?),
+            None => Ok(self.inner.accept_uni().await?.into()),
         }
     }
 
-    pub async fn open_uni(&mut self) -> Result<quinn::SendStream, WTError> {
+    pub async fn open_uni(&mut self) -> Result<WriteStream, WTError> {
         match self.connect {
             Some(_) => {
-                let (mut buffer, mut stream) = UniStream::WEBTRANSPORT.open(&mut self.inner).await?;
-                buffer.write_varint(self.id.into_inner());
-                stream.write_all(&buffer[..]).await?;
-                Ok(stream)
+                let stream = UniStream::WEBTRANSPORT.open(&mut self.inner).await?;
+                let ws = WriteStream::open(stream, self.id).await?;
+                Ok(ws)
             }
-            None => Ok(self.inner.open_uni().await?),
+            None => Ok(self.inner.open_uni().await?.into()),
         }
     }
 
@@ -74,7 +73,7 @@ impl Connection {
     }
 }
 
-type AcceptUni = dyn Future<Output = Result<(UniStream, quinn::RecvStream), H3Error>> + Send;
+type AcceptUni = dyn Future<Output = Result<ReadStream, WTError>> + Send;
 
 /// Accepting a Stream in WebTransport is serious undertaking. H3 Streams may come in the way and annoy us, because they block on read().
 /// Iterating each stream to find the WebTransport will be thwarted by this annoying block_on_read by the H3 Streams.
@@ -84,6 +83,9 @@ pub struct WTAccept {
     id: VarInt,
     conn: quinn::Connection,
     uni: FuturesUnordered<Pin<Box<AcceptUni>>>,
+    qpack_encoder: Option<ReadStream>,
+    qpack_decoder: Option<ReadStream>,
+    push: Option<ReadStream>,
 }
 
 impl WTAccept {
@@ -92,44 +94,53 @@ impl WTAccept {
             id,
             conn,
             uni: FuturesUnordered::new(),
+            qpack_encoder: None,
+            qpack_decoder: None,
+            push: None,
         }
     }
 
-    async fn process_uni_stream(&mut self, s: (UniStream, quinn::RecvStream)) -> Result<Option<quinn::RecvStream>, WTError> {
-        let (stype, mut stream) = (s.0, s.1);
-
-        match stype {
-            UniStream::WEBTRANSPORT => {
-                let sid = stream.read_varint().await?;
-                if self.id != sid {
-                    return Err(WTError::ProtocolError("Recevied Stream with Invalid Stream ID"));
-                }
-                Ok(Some(stream))
+    async fn process_uni_stream(&mut self, rs: ReadStream) -> Result<Option<ReadStream>, WTError> {
+        if rs.id.unwrap() != self.id {
+            return Err(WTError::ProtocolError("Recevied Stream with Invalid Stream ID"));
+        }
+        match rs.stype.clone().unwrap() {
+            UniStream::WEBTRANSPORT => Ok(Some(rs)),
+            UniStream::QPACK_ENCODER => {
+                tracing::debug!("Received QPack ecoder Unistream");
+                self.qpack_encoder = Some(rs);
+                Ok(None)
             }
-            _ => Ok(None),
+            UniStream::QPACK_DECODER => {
+                tracing::debug!("Received QPack Decoder Unistream");
+                self.qpack_decoder = Some(rs);
+                Ok(None)
+            }
+            UniStream::PUSH => {
+                tracing::debug!("Received H3 Push Unistream");
+                self.push = Some(rs);
+                Ok(None)
+            }
+            _ => {
+                tracing::warn!("Received Uni Stream with Unknown Header");
+                Ok(None)
+            }
         }
     }
 
-    pub async fn accept_uni(&mut self) -> Result<quinn::RecvStream, WTError> {
+    /// Blocks until a new uni stream is available on the connection
+    pub async fn accept_uni(&mut self) -> Result<ReadStream, WTError> {
         loop {
             tokio::select! {
                 qstream = self.conn.accept_uni() => {
-                    // Unistream::Poll Simply reads the type of the stream asynchronously.
-                    let poll = UniStream::poll(qstream?);
-                    // Push it to the UniStream Futures Queue. Hopefully, it will get resolved and the output shows in the next branch of this select!{} on the next iteration
-                    self.uni.push(Box::pin(poll));
+                    self.uni.push(Box::pin(ReadStream::accept(qstream?))); // Push it to the UniStream Futures Queue. Hopefully, it will get resolved and the output shows in the next branch of this select!{} on the next iteration
                 },
-               s = self.uni.next() => match s.transpose() {
-                   Ok(s) => if let Some(wtstream) = s {
-                       if let Some(wts) = self.process_uni_stream(wtstream).await? {
-                           return Ok(wts)
-                       }
-                   },
-                   Err(e) => {
-                       // We don't return here, because we are inside loop { select!{} }, there might be other streams waiting in queue.
-                       tracing::error!("[Error Accepting Uni Stream][{e}]");
-                   }
-               }
+                next = self.uni.next() => match next {
+                    Some(rs) => if let Some(rstream) = self.process_uni_stream(rs?).await? {
+                        return Ok(rstream)
+                    },
+                    None => {}
+                }
             }
         }
     }

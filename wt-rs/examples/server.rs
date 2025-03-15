@@ -119,7 +119,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
             loop {
                 let mut rs = moqconn.accept_uni().await?;
-                let d = rs.read_chunk(usize::MAX, true).await.unwrap().unwrap().bytes;
+                let d = rs.read_chunk().await.unwrap().unwrap().bytes;
                 tracing::debug!("Received - {}", String::from_utf8_lossy(&d[..]));
 
                 let mut send = moqconn.open_uni().await?;
