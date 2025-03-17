@@ -11,7 +11,7 @@ impl Connect {
     pub async fn accept(conn: &mut quinn::Connection) -> Result<Connect, WTError> {
         let mut request = h3::connect::Request::accept(conn).await?;
 
-        if !request.headers.get(":protocol").is_some_and(|val| val == "webtransport") {
+        if request.headers.get(":protocol").is_none_or(|val| val != "webtransport") {
             return Err(WTError::ProtocolError(":protocol invalid in H3 Header"));
         }
 

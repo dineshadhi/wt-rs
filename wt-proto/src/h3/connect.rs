@@ -19,13 +19,13 @@ impl Request {
 
         if ftype != Frame::HEADERS {
             tracing::error!("Connect Error - Expected Headers - Got {:x?}", ftype.0.into_inner());
-            return Err(H3Error::ProtocolError("Incorrect Ftype".into()));
+            return Err(H3Error::ProtocolError("Incorrect Ftype"));
         }
 
         let headers = qpack::Headers::decode(&mut fdata)?;
 
-        if !headers.get(":method").is_some_and(|val| val == "CONNECT") {
-            return Err(H3Error::ProtocolError(":method invalid in H3 Header".into()));
+        if headers.get(":method").is_none_or(|val| val != "CONNECT") {
+            return Err(H3Error::ProtocolError(":method invalid in H3 Header"));
         }
 
         tracing::debug!("[H3 Headers][{:?}]", headers);

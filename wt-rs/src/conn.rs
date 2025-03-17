@@ -76,7 +76,7 @@ impl Connection {
 
     pub async fn read_datagram(&mut self) -> Result<Bytes, WTError> {
         let data = self.inner.read_datagram().await?;
-        Ok(Bytes::from(data))
+        Ok(data)
     }
 
     pub async fn send_datagram(&mut self, data: Bytes) -> Result<(), WTError> {
@@ -146,12 +146,9 @@ impl BiAccept {
                     tracing::debug!("Bi Accepted");
                     self.bi.push(Box::pin(Self::decode_bi(qstream?)));
                 },
-                next = self.bi.next() => match next {
-                    Some(rs) => if let Some(bistream) = self.process_bi_stream(rs?)? {
-                        return Ok(bistream)
-                    },
-                    None => {}
-                }
+                next = self.bi.next() => if let Some(rs) = next { if let Some(bistream) = self.process_bi_stream(rs?)? {
+                    return Ok(bistream)
+                }}
             }
         }
     }
@@ -204,12 +201,9 @@ impl UniAccept {
                 qstream = self.conn.accept_uni() => {
                     self.uni.push(Box::pin(ReadStream::accept(qstream?))); // Push it to the UniStream Futures Queue. Hopefully, it will get resolved and the output shows in the next branch of this select!{} on the next iteration
                 },
-                next = self.uni.next() => match next {
-                    Some(rs) => if let Some(rstream) = self.process_uni_stream(rs?)? {
-                        return Ok(rstream)
-                    },
-                    None => {}
-                }
+                next = self.uni.next() => if let Some(rs) = next { if let Some(rstream) = self.process_uni_stream(rs?)? {
+                    return Ok(rstream)
+                }}
             }
         }
     }

@@ -57,18 +57,18 @@ impl ReadStream {
     }
 }
 
-impl Into<ReadStream> for RecvStream {
-    fn into(self) -> ReadStream {
+impl From<RecvStream> for ReadStream {
+    fn from(val: RecvStream) -> Self {
         ReadStream {
-            inner: self,
+            inner: val,
             stype: None,
             id: None,
         }
     }
 }
 
-impl Into<WriteStream> for SendStream {
-    fn into(self) -> WriteStream {
-        WriteStream { inner: self }
+impl From<SendStream> for WriteStream {
+    fn from(val: SendStream) -> Self {
+        WriteStream { inner: val }
     }
 }

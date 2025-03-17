@@ -34,7 +34,7 @@ trait LossyString {
 
 impl LossyString for Vec<u8> {
     fn lossy(&self) -> &str {
-        std::str::from_utf8(&self).unwrap()
+        std::str::from_utf8(self).unwrap()
     }
 }
 

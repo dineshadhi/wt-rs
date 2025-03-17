@@ -75,7 +75,7 @@ pub struct Settings {
 
 impl Debug for Settings {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut str = format!("[");
+        let mut str = "[".to_string();
         for (setting, value) in self.inner.clone() {
             str = format!("{}  {:?} - {:?}", str, setting, value)
         }
@@ -145,7 +145,7 @@ impl Settings {
             return n.into_inner() >= 1;
         }
 
-        return false;
+        false
     }
 
     pub async fn open(mut conn: quinn::Connection, settings: Settings) -> Result<quinn::SendStream, H3Error> {
