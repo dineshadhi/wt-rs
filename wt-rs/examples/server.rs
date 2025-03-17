@@ -117,14 +117,25 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 }
             };
 
-            loop {
-                let mut rs = moqconn.accept_uni().await?;
+            let mut mq1 = moqconn.clone();
+            let mut mq2 = moqconn.clone();
+
+            tokio::spawn(async move {
+                tracing::debug!("Starting Accept");
+                let mut rs = mq1.accept_uni().await.unwrap();
                 let d = rs.read_chunk().await.unwrap().unwrap().bytes;
                 tracing::debug!("Received - {}", String::from_utf8_lossy(&d[..]));
 
-                let mut send = moqconn.open_uni().await?;
-                send.write_all(&d[..]).await?;
-            }
+                let mut send = moqconn.open_uni().await.unwrap();
+                send.write_all(&d[..]).await.unwrap();
+            });
+
+            tokio::spawn(async move {
+                tracing::debug!("Starting Bi Accept");
+                let (mut ws, mut rs) = mq2.accept_bi().await.unwrap();
+                let d = rs.read_chunk().await.unwrap().unwrap().bytes;
+                tracing::debug!("Received - {}", String::from_utf8_lossy(&d[..]));
+            });
         }
     }
 

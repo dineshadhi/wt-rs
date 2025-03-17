@@ -118,11 +118,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
             };
 
             let mut conn = moqconn.clone();
+            let mut conn2 = moqconn.clone();
 
             tokio::spawn(async move {
                 loop {
                     let data = moqconn.read_datagram().await.unwrap();
-                    tracing::debug!("Received - {}", String::from_utf8_lossy(&data[..]));
+                    tracing::debug!("Received Datagram - {}", String::from_utf8_lossy(&data[..]));
                     moqconn.send_datagram(data).await.unwrap();
                 }
             });
@@ -131,10 +132,18 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 loop {
                     let mut rs = conn.accept_uni().await.unwrap();
                     let d = rs.read_chunk().await.unwrap().unwrap().bytes;
-                    tracing::debug!("Received - {}", String::from_utf8_lossy(&d[..]));
+                    tracing::debug!("Received Uni - {}", String::from_utf8_lossy(&d[..]));
 
                     let mut send = conn.open_uni().await.unwrap();
                     send.write_all(&d[..]).await.unwrap();
+                }
+            });
+
+            tokio::spawn(async move {
+                loop {
+                    let (_write, mut rs) = conn2.accept_bi().await.unwrap();
+                    let d = rs.read_chunk().await.unwrap().unwrap().bytes;
+                    tracing::debug!("Received Bi - {}", String::from_utf8_lossy(&d[..]));
                 }
             });
         }
