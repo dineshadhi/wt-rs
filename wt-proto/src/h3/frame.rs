@@ -1,9 +1,8 @@
 use bytes::{BufMut, Bytes};
 use quinn::VarInt;
-use quinn_proto::coding::BufMutExt;
 use std::fmt::Debug;
 
-use crate::coding::VarIntExt;
+use crate::coding::{VarIntAsyncExt, VarIntMutExt};
 
 use super::H3Error;
 
@@ -57,23 +56,25 @@ impl Frame {
     }
 
     pub fn encode<B: BufMut>(&self, b: &mut B, fdata: Bytes) {
-        b.write_var(self.0.into_inner());
-        b.write_var(fdata.len() as u64);
+        b.write_varint(self.0.into_inner());
+        b.write_varint(fdata.len() as u64);
         b.put(fdata);
     }
 
-    pub async fn accept<V: VarIntExt>(v: &mut V) -> Result<(Frame, usize, Bytes), H3Error> {
+    pub async fn accept(v: &mut quinn::RecvStream) -> Result<(Frame, usize, Bytes), H3Error> {
         loop {
             let ftype = Frame(v.read_varint().await?);
             let len = v.read_varint().await?.into_inner() as usize;
-            let data = v.read_len(len).await?;
+
+            let mut data = vec![0; len];
+            v.read_exact(data.as_mut_slice()).await?;
 
             if ftype.is_grease() {
                 tracing::debug!("Got Grease Frame");
                 continue;
             }
 
-            return Ok((ftype, len, data));
+            return Ok((ftype, len, Bytes::from(data)));
         }
     }
 }

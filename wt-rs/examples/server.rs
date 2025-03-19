@@ -27,6 +27,7 @@ use wt_proto::{
     coding::VarIntExt,
     h3::{self, frame::Frame},
 };
+use wt_rs as wt;
 
 trait LossyString {
     fn lossy(&self) -> &str;

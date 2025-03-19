@@ -15,7 +15,7 @@ use bytes::Bytes;
 use futures::{future::poll_fn, ready, stream::FuturesUnordered, Stream, StreamExt};
 use quinn::VarInt;
 use wt_proto::{
-    coding::VarIntExt,
+    coding::VarIntAsyncExt,
     h3::streams::{BiStream, UniStream},
 };
 
@@ -131,7 +131,7 @@ type AcceptBi = dyn Stream<Item = Result<(quinn::SendStream, quinn::RecvStream),
 type PendingUni = dyn Future<Output = Result<(UniStream, ReadStream), WTError>> + Send + 'static;
 type PendingBi = dyn Future<Output = Result<(BiStream, (WriteStream, ReadStream)), WTError>> + Send + 'static;
 
-/// Accepting a Stream in WebTransport is serious undertaking. H3 Streams may come in the way and annoy us, because they block on read().
+/// Accepting a Stream in WebTransport on Async land is a serious undertaking. H3 Streams may come in the way and annoy us, because they block on read() (I think its bad design).
 /// Iterating each stream to find the WebTransport will be thwarted by this annoying block_on_read by the H3 Streams.
 /// WTAccept is a least complicated way as far as I know to accept a WebTransport streams.
 /// If you find a better way, send patch
@@ -148,7 +148,7 @@ pub struct WTAccept {
     uni: Pin<Box<AcceptUni>>,
     bi: Pin<Box<AcceptBi>>,
 
-    // Placeholders for Streams so that it doesn't get dropped
+    // Placeholders for H3 Streams so that it doesn't get dropped and close the connection
     qpack_encoder: Option<ReadStream>,
     qpack_decoder: Option<ReadStream>,
     push: Option<ReadStream>,
@@ -185,6 +185,7 @@ impl WTAccept {
         Ok((stype, stream.into()))
     }
 
+    // A convinient poll wrapper to loop through all the blocking H3 streams and find the WebTransport Stream
     pub fn poll_accept_uni(&mut self, ctx: &mut Context<'_>) -> Poll<Result<ReadStream, WTError>> {
         loop {
             if let Poll::Ready(Some(stream)) = self.uni.poll_next_unpin(ctx) {
@@ -196,16 +197,17 @@ impl WTAccept {
             // Then search for a stream that is readable and ready
             let (stype, stream) = match ready!(self.pending_uni.poll_next_unpin(ctx)) {
                 Some(s) => s?,
-                None => return Poll::Pending, // If not, return Pending
+                None => return Poll::Pending, // If not, there is no more uni streams in the queuem so return Pending.
             };
 
             match stype {
-                // Return if its WebTransports
+                // Return if its WebTransports.
                 UniStream::WEBTRANSPORT => return Poll::Ready(Ok(stream)),
-                // Otherwise, simply store it to prevent dropping
+                // Otherwise, its a H3 stream probably. So, simply store it to prevent dropping.
                 UniStream::QPACK_ENCODER => self.qpack_encoder = Some(stream),
                 UniStream::QPACK_DECODER => self.qpack_decoder = Some(stream),
                 UniStream::PUSH => self.push = Some(stream),
+                // Drop a warning, if we get weird header.
                 _ => {
                     tracing::warn!("Received Unknown UniStream {:x?}", stype.0.into_inner())
                 }
@@ -227,6 +229,7 @@ impl WTAccept {
         Ok((stype, (send.into(), recv.into())))
     }
 
+    // A convinient poll wrapper to loop through all the blocking H3 streams and find the WebTransport Stream
     pub fn poll_accept_bi(&mut self, ctx: &mut Context<'_>) -> Poll<Result<(WriteStream, ReadStream), WTError>> {
         loop {
             if let Poll::Ready(Some(stream)) = self.bi.poll_next_unpin(ctx) {
@@ -242,10 +245,10 @@ impl WTAccept {
             };
 
             match stype {
-                // Return if its WebTransports
+                // Return if its WebTransport
                 BiStream::WEBTRANSPORT => return Poll::Ready(Ok((ws, rs))),
                 _ => {
-                    tracing::debug!("Received BiStream with Unknown Header : {:x?}", stype.0.into_inner());
+                    tracing::warn!("Received BiStream with Unknown Header : {:x?}", stype.0.into_inner());
                 }
             }
         }

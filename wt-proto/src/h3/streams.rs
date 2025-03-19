@@ -1,7 +1,6 @@
-use crate::{coding::VarIntExt, h3::H3Error};
+use crate::{coding::VarIntAsyncExt, coding::VarIntMutExt, h3::H3Error};
 use bytes::{BufMut, BytesMut};
 use quinn::VarInt;
-use quinn_proto::coding::BufMutExt;
 
 #[derive(PartialEq, Eq, Debug, Clone)]
 pub struct UniStream(pub VarInt);
@@ -40,7 +39,7 @@ impl UniStream {
     }
 
     pub fn encode<B: BufMut>(&self, buffer: &mut B) {
-        buffer.write_var(self.0.into_inner());
+        buffer.write_varint(self.0.into_inner());
     }
 }
 
@@ -60,17 +59,6 @@ bistream! {
 }
 
 impl BiStream {
-    pub async fn accept(conn: &mut quinn::Connection) -> Result<(quinn::SendStream, quinn::RecvStream), H3Error> {
-        let (send, mut recv) = conn.accept_bi().await?;
-        let header = BiStream(recv.read_varint().await?);
-
-        if header != BiStream::WEBTRANSPORT {
-            return Err(H3Error::ProtocolError("Recevied Unknown Header on BiStream"));
-        }
-
-        Ok((send, recv))
-    }
-
     pub async fn open(&self, conn: &mut quinn::Connection) -> Result<(quinn::SendStream, quinn::RecvStream), H3Error> {
         let mut buffer = BytesMut::new();
         self.encode(&mut buffer);
@@ -82,6 +70,6 @@ impl BiStream {
     }
 
     pub fn encode<B: BufMut>(&self, buffer: &mut B) {
-        buffer.write_var(self.0.into_inner());
+        buffer.write_varint(self.0.into_inner());
     }
 }

@@ -45,7 +45,7 @@ impl Endpoint<Server> {
         };
 
         let alpn = match hdata.downcast_ref::<HandshakeData>() {
-            Some(hdata) => hdata.protocol.to_owned().clone().unwrap(),
+            Some(hdata) => hdata.protocol.to_owned().unwrap(),
             None => return Err(WTError::ProtocolError("Handshake Error : ALPN Unknown")),
         };
 

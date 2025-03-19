@@ -31,6 +31,7 @@ use wt_proto::{
     coding::VarIntExt,
     h3::{self, frame::Frame},
 };
+use wt_rs as wt;
 
 trait LossyString {
     fn lossy(&self) -> &str;
@@ -133,5 +134,5 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     handle.await.unwrap();
 
-    todo!()
+    Ok(())
 }

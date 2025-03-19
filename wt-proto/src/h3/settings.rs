@@ -94,13 +94,14 @@ impl Settings {
         Self { inner }
     }
 
-    pub async fn decode<V: VarIntExt>(v: &mut V, len: usize) -> Result<Self, H3Error> {
+    pub async fn decode(data: &mut Bytes, len: usize) -> Result<Self, H3Error> {
         let mut settings = Settings::default();
-        let mut data = v.read_len(len).await?;
+        let mut data = data.split_to(len);
 
         while data.has_remaining() {
-            let setting = Setting(data.read_varint().await?);
-            let value = data.read_varint().await?.into_inner() as u32;
+            dbg!(data.len());
+            let setting = Setting(data.read_varint()?);
+            let value = data.read_varint()?.into_inner() as u32;
 
             settings.insert(setting, value);
         }
