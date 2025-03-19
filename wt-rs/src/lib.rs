@@ -1,8 +1,11 @@
 pub mod conn;
 pub mod connect;
+pub mod endpoint;
 pub mod settings;
 pub mod streams;
+
 pub use conn::*;
+pub use endpoint::*;
 
 use quinn::{ReadError, SendDatagramError, WriteError};
 use thiserror::Error;

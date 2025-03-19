@@ -69,6 +69,7 @@ impl Connection {
 
         Ok(conn)
     }
+
     /// Accepts a Unidirectional Stream.
     pub async fn accept_uni(&mut self) -> Result<ReadStream, WTError> {
         if self.connect.is_some() {
@@ -179,6 +180,8 @@ impl WTAccept {
             return Err(WTError::ProtocolError("UniStream Accept : Session ID mismatch"));
         }
 
+        tracing::debug!("New QUIC Uni Stream !!!");
+
         Ok((stype, stream.into()))
     }
 
@@ -187,15 +190,19 @@ impl WTAccept {
             if let Poll::Ready(Some(stream)) = self.uni.poll_next_unpin(ctx) {
                 let pending = Self::decode_uni(self.id, stream?);
                 self.pending_uni.push(Box::pin(pending));
+                continue; // Loop through all streams from accept_unis() on quic connection.
             }
 
+            // Then search for a stream that is readable and ready
             let (stype, stream) = match ready!(self.pending_uni.poll_next_unpin(ctx)) {
                 Some(s) => s?,
-                None => return Poll::Pending,
+                None => return Poll::Pending, // If not, return Pending
             };
 
             match stype {
+                // Return if its WebTransports
                 UniStream::WEBTRANSPORT => return Poll::Ready(Ok(stream)),
+                // Otherwise, simply store it to prevent dropping
                 UniStream::QPACK_ENCODER => self.qpack_encoder = Some(stream),
                 UniStream::QPACK_DECODER => self.qpack_decoder = Some(stream),
                 UniStream::PUSH => self.push = Some(stream),
@@ -225,14 +232,17 @@ impl WTAccept {
             if let Poll::Ready(Some(stream)) = self.bi.poll_next_unpin(ctx) {
                 let pending = Self::decode_bi(self.id, stream?);
                 self.pending_bi.push(Box::pin(pending));
+                continue; // loop through all bistreams from accpet_bi() on the quic connection
             }
 
+            // Then search for a stream that is readable and ready
             let (stype, (ws, rs)) = match ready!(self.pending_bi.poll_next_unpin(ctx)) {
                 Some(s) => s?,
-                None => return Poll::Pending,
+                None => return Poll::Pending, // Return Pending if not
             };
 
             match stype {
+                // Return if its WebTransports
                 BiStream::WEBTRANSPORT => return Poll::Ready(Ok((ws, rs))),
                 _ => {
                     tracing::debug!("Received BiStream with Unknown Header : {:x?}", stype.0.into_inner());

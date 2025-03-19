@@ -95,61 +95,47 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let server_config = load_certs(certpath.join("key.pem"), certpath.join("cert.pem"))?;
     let listenaddr = "[::]:4433".parse().unwrap();
 
-    let endpoint = quinn::Endpoint::server(server_config, listenaddr)?;
-
-    tracing::info!("[Quic Server Listening on {}]", listenaddr);
+    let mut endpoint = wt::Endpoint::server(server_config, listenaddr);
 
     loop {
-        if let Some(incoming) = endpoint.accept().await {
-            let conn = incoming.await.unwrap();
+        let wtconn = endpoint.accept().await?;
 
-            let alpn = match conn.handshake_data().unwrap().downcast_ref::<HandshakeData>() {
-                Some(hsdata) => hsdata.protocol.to_owned().unwrap(),
-                None => {
-                    panic!("Hanshake Data cannot be found");
-                }
-            };
+        let mut wt1 = wtconn.clone();
+        let mut wt2 = wtconn.clone();
+        let mut wt3 = wtconn.clone();
 
-            let mut moqconn: wt::Connection = match alpn.as_slice() {
-                h3::ALPN_H3 => wt::Connection::upgrade(conn).await.unwrap(),
-                _ => {
-                    continue;
-                }
-            };
+        tokio::spawn(async move {
+            loop {
+                let data = wt1.read_datagram().await.unwrap();
+                tracing::debug!("Received Datagram - {}", String::from_utf8_lossy(&data[..]));
+                wt1.send_datagram(data).await.unwrap();
+                tracing::debug!("Sent Datagram !!!");
+            }
+        });
 
-            let mut conn = moqconn.clone();
-            let mut conn2 = moqconn.clone();
+        tokio::spawn(async move {
+            loop {
+                let mut rs = wt2.accept_uni().await.unwrap();
+                let d = rs.read_chunk().await.unwrap().unwrap().bytes;
+                tracing::debug!("Received Uni - {}", String::from_utf8_lossy(&d[..]));
 
-            tokio::spawn(async move {
-                loop {
-                    let data = moqconn.read_datagram().await.unwrap();
-                    tracing::debug!("Received Datagram - {}", String::from_utf8_lossy(&data[..]));
-                    moqconn.send_datagram(data).await.unwrap();
-                }
-            });
+                let mut send = wt2.open_uni().await.unwrap();
+                send.write_all(&d[..]).await.unwrap();
+                tracing::debug!("Sent Uni Stream back !!!");
+            }
+        });
 
-            tokio::spawn(async move {
-                loop {
-                    let mut rs = conn.accept_uni().await.unwrap();
-                    let d = rs.read_chunk().await.unwrap().unwrap().bytes;
-                    tracing::debug!("Received Uni - {}", String::from_utf8_lossy(&d[..]));
+        tokio::spawn(async move {
+            loop {
+                let (_, mut rs) = wt3.accept_bi().await.unwrap();
+                let d = rs.read_chunk().await.unwrap().unwrap().bytes;
+                tracing::debug!("Received Bi - {}", String::from_utf8_lossy(&d[..]));
 
-                    let mut send = conn.open_uni().await.unwrap();
-                    send.write_all(&d[..]).await.unwrap();
-                }
-            });
-
-            tokio::spawn(async move {
-                loop {
-                    let (_, mut rs) = conn2.accept_bi().await.unwrap();
-                    let d = rs.read_chunk().await.unwrap().unwrap().bytes;
-                    tracing::debug!("Received Bi - {}", String::from_utf8_lossy(&d[..]));
-
-                    let (mut wt, _) = conn2.open_bi().await.unwrap();
-                    wt.write_all(&d[..]).await.unwrap();
-                }
-            });
-        }
+                let (mut wt, _) = wt3.open_bi().await.unwrap();
+                wt.write_all(&d[..]).await.unwrap();
+                tracing::debug!("Received Bi - {}", String::from_utf8_lossy(&d[..]));
+            }
+        });
     }
 
     Ok(())

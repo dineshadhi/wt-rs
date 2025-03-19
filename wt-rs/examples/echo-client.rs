@@ -91,17 +91,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let bindaddr = "[::]:5000".parse().unwrap();
     let serveraddr = "127.0.0.1:4433".parse().unwrap();
 
-    let endpoint = quinn::Endpoint::client(bindaddr)?;
-    let qconn = endpoint.connect_with(client_config, serveraddr, "wt-server")?.await?;
-
-    let alpn = match qconn.handshake_data().unwrap().downcast_ref::<HandshakeData>() {
-        Some(hsdata) => hsdata.protocol.to_owned().unwrap(),
-        None => {
-            panic!("Hanshake Data cannot be found");
-        }
-    };
-
-    let mut wt = wt::Connection::open(qconn.clone()).await.unwrap();
+    let mut endpoint = wt::Endpoint::client(client_config, bindaddr);
+    let wt = endpoint.connect(serveraddr, "wt-server").await?;
 
     let mut wt1 = wt.clone();
     let mut wt2 = wt.clone();
