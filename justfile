@@ -4,6 +4,10 @@ default :
 run module : 
     RUST_BACKTRACE=true RUST_LOG=debug cargo run --example {{module}}
 
+check :
+    cargo clippy --no-deps -- -D warnings 
+    cargo check
+
 cert : 
     mkdir -p cert
     mkcert -install

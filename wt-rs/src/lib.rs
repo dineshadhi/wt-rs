@@ -36,4 +36,7 @@ pub enum WTError {
 
     #[error("Write Error {0}")]
     WriteError(#[from] WriteError),
+
+    #[error("Accpet Error")]
+    AcceptError(&'static str),
 }
