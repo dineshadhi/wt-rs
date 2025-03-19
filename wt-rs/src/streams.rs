@@ -1,9 +1,6 @@
 use bytes::BytesMut;
 use quinn::{Chunk, RecvStream, SendStream, VarInt};
-use wt_proto::{
-    coding::{VarIntExt, VarIntMutExt},
-    h3::unistream::UniStream,
-};
+use wt_proto::coding::VarIntMutExt;
 
 use crate::WTError;
 
@@ -27,31 +24,14 @@ impl WriteStream {
 
 pub struct ReadStream {
     pub inner: RecvStream,
-    pub stype: Option<UniStream>,
-    pub id: Option<VarInt>,
 }
 
 impl ReadStream {
     pub async fn new(stream: RecvStream) -> Result<Self, WTError> {
-        Ok(Self {
-            inner: stream,
-            stype: None,
-            id: None,
-        })
+        Ok(Self { inner: stream })
     }
 
-    // Accept from incoming WebTransport Stream
-    pub async fn accept(mut stream: RecvStream) -> Result<Self, WTError> {
-        let stype = UniStream(stream.read_varint().await?);
-        let sid = stream.read_varint().await?;
-
-        Ok(Self {
-            inner: stream,
-            stype: Some(stype),
-            id: Some(sid),
-        })
-    }
-
+    /// Reads a chunk of data from the quinn's API.
     pub async fn read_chunk(&mut self) -> Result<Option<Chunk>, WTError> {
         Ok(self.inner.read_chunk(usize::MAX, true).await?)
     }
@@ -59,11 +39,7 @@ impl ReadStream {
 
 impl From<RecvStream> for ReadStream {
     fn from(val: RecvStream) -> Self {
-        ReadStream {
-            inner: val,
-            stype: None,
-            id: None,
-        }
+        ReadStream { inner: val }
     }
 }
 

@@ -20,6 +20,18 @@ impl Connect {
         Ok(Connect { inner: request })
     }
 
+    pub async fn open(conn: &mut quinn::Connection) -> Result<Connect, WTError> {
+        let mut headers = qpack::Headers::default();
+        headers.set("origin", "https://googlechrome.github.io");
+        headers.set(":protocol", "webtransport");
+        headers.set(":method", "CONNECT");
+        headers.set(":scheme", "https");
+        headers.set("sec-webtransport-http3-draft02", "1");
+
+        let request = h3::connect::Request::open(conn, headers).await?;
+        Ok(Connect { inner: request })
+    }
+
     pub fn session_id(&self) -> VarInt {
         VarInt::from(self.inner.writer.id())
     }

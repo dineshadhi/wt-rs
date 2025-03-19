@@ -1,7 +1,7 @@
 use super::H3Error;
 use crate::{
     coding::{VarIntExt, VarIntMutExt},
-    h3::{frame::Frame, unistream::UniStream},
+    h3::{frame::Frame, streams::UniStream},
 };
 use bytes::{Buf, Bytes, BytesMut};
 use quinn::VarInt;

@@ -6,12 +6,17 @@ use thiserror::Error;
 
 pub mod connect;
 pub mod frame;
+/// Huffman Encoding for H3 Headers Parsing
 pub mod huffman;
+/// QPack spec specified by H3 for Heeaders
 pub mod qpack;
+/// Generic H3 Settings Module, handles all WebTransport related settings.
 pub mod settings;
-pub mod unistream;
+/// WebTransport Streams are stacked on top of H3 QUIC Streams. This module is designed to facilitate accept / open of both Uni & Bi Streams of WebTransport
+pub mod streams;
 
 pub use settings::*;
+pub use streams::*;
 
 pub const ALPN_H3: &[u8] = b"h3";
 
@@ -40,4 +45,7 @@ pub enum H3Error {
 
     #[error("Qpack Decode Error {0}")]
     QpackDeocdeError(#[from] qpack::DecodeError),
+
+    #[error("ConectError")]
+    ConnectError,
 }

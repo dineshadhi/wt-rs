@@ -33,8 +33,38 @@ impl Request {
         Ok(Self { writer, reader, headers })
     }
 
-    pub async fn open(_conn: &mut quinn::Connection) -> Result<Self, H3Error> {
-        todo!()
+    pub async fn open(conn: &mut quinn::Connection, headers: qpack::Headers) -> Result<Self, H3Error> {
+        let mut hdata = BytesMut::new();
+        let mut buf = BytesMut::new();
+        headers.encode(&mut hdata);
+        Frame::HEADERS.encode(&mut buf, hdata.freeze());
+
+        let (mut send, mut recv) = conn.open_bi().await?;
+        send.write_all(&buf[..]).await?;
+
+        let (ftype, _, mut fdata) = Frame::accept(&mut recv).await?;
+
+        if ftype != Frame::HEADERS {
+            return Err(H3Error::ProtocolError("Received Unknown Header on Connect Open"));
+        }
+
+        let resp = qpack::Headers::decode(&mut fdata)?;
+
+        if resp.get(":status").is_none_or(|code| code != "200") {
+            tracing::error!("Received Error Reponse : {:?}", resp);
+            return Err(H3Error::ConnectError);
+        }
+
+        if resp.get("sec-webtransport-http3-draft").is_none_or(|draft| draft != "draft02") {
+            tracing::error!("HTTP3 Draft Not Supported : {:?}", resp);
+            return Err(H3Error::ConnectError);
+        }
+
+        Ok(Self {
+            writer: send,
+            reader: recv,
+            headers,
+        })
     }
 
     pub async fn ok(&mut self) -> Result<(), H3Error> {

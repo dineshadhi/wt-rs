@@ -141,9 +141,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
             tokio::spawn(async move {
                 loop {
-                    let (_write, mut rs) = conn2.accept_bi().await.unwrap();
+                    let (_, mut rs) = conn2.accept_bi().await.unwrap();
                     let d = rs.read_chunk().await.unwrap().unwrap().bytes;
                     tracing::debug!("Received Bi - {}", String::from_utf8_lossy(&d[..]));
+
+                    let (mut wt, _) = conn2.open_bi().await.unwrap();
+                    wt.write_all(&d[..]).await.unwrap();
                 }
             });
         }

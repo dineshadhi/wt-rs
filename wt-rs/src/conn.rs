@@ -1,4 +1,9 @@
-use std::{future::Future, pin::Pin, sync::Arc};
+use std::{
+    future::Future,
+    pin::Pin,
+    sync::{Arc, Mutex},
+    task::{Context, Poll},
+};
 
 use crate::{
     connect::Connect,
@@ -7,10 +12,12 @@ use crate::{
     WTError,
 };
 use bytes::Bytes;
-use futures::{stream::FuturesUnordered, StreamExt};
-use quinn::{RecvStream, SendStream, VarInt};
-use tokio::sync::Mutex;
-use wt_proto::h3::unistream::UniStream;
+use futures::{future::poll_fn, ready, stream::FuturesUnordered, Stream, StreamExt};
+use quinn::VarInt;
+use wt_proto::{
+    coding::VarIntExt,
+    h3::streams::{BiStream, UniStream},
+};
 
 #[derive(Clone)]
 pub struct Connection {
@@ -22,55 +29,88 @@ pub struct Connection {
     settings: Option<Arc<Settings>>,
     #[allow(dead_code)]
     connect: Option<Arc<Connect>>,
-    uniaccept: Option<Arc<Mutex<UniAccept>>>,
-    biaccept: Option<Arc<Mutex<BiAccept>>>,
+    accept: Arc<Mutex<WTAccept>>,
 }
 
 impl Connection {
+    /// Upgrades a simple QUIC connection to a WebTransport Connection. What WebSocket::Upgrade is for `tcp`, this is WebTransport::Upgrade for `quic`.
     pub async fn upgrade(mut conn: quinn::Connection) -> Result<Connection, WTError> {
         let settings = Settings::accept(conn.clone()).await?;
         let connect = Connect::accept(&mut conn).await?;
         let id = connect.session_id();
 
-        let uniaccept = UniAccept::new(id, conn.clone());
-        let biaccept = BiAccept::new(id, conn.clone());
+        let accept = WTAccept::new(id, conn.clone());
 
         let conn = Connection {
             id,
             inner: conn,
             settings: Some(Arc::new(settings)),
             connect: Some(Arc::new(connect)),
-            uniaccept: Some(Arc::new(Mutex::new(uniaccept))),
-            biaccept: Some(Arc::new(Mutex::new(biaccept))),
+            accept: Arc::new(Mutex::new(accept)),
         };
 
         Ok(conn)
     }
 
+    pub async fn open(mut conn: quinn::Connection) -> Result<Connection, WTError> {
+        let settings = Settings::accept(conn.clone()).await?;
+        let connect = Connect::open(&mut conn).await?;
+        let id = connect.session_id();
+
+        let accept = WTAccept::new(id, conn.clone());
+
+        let conn = Connection {
+            id,
+            inner: conn,
+            settings: Some(Arc::new(settings)),
+            connect: Some(Arc::new(connect)),
+            accept: Arc::new(Mutex::new(accept)),
+        };
+
+        Ok(conn)
+    }
+    /// Accepts a Unidirectional Stream.
     pub async fn accept_uni(&mut self) -> Result<ReadStream, WTError> {
-        match self.uniaccept.to_owned() {
-            Some(a) => a.lock().await.accept_uni().await,
-            None => Ok(self.inner.accept_uni().await?.into()),
+        if self.connect.is_some() {
+            poll_fn(|ctx| self.accept.lock().unwrap().poll_accept_uni(ctx)).await
+        } else {
+            let stream = self.inner.accept_uni().await?;
+            Ok(stream.into())
         }
     }
+
+    /// Accepts a Bidirectional Stream.
     pub async fn accept_bi(&mut self) -> Result<(WriteStream, ReadStream), WTError> {
-        match self.biaccept.to_owned() {
-            Some(a) => a.lock().await.accept_bi().await,
-            None => {
-                let (send, recv) = self.inner.accept_bi().await?;
-                Ok((send.into(), recv.into()))
-            }
+        if self.connect.is_some() {
+            poll_fn(|ctx| self.accept.lock().unwrap().poll_accept_bi(ctx)).await
+        } else {
+            let (send, recv) = self.inner.accept_bi().await?;
+            Ok((send.into(), recv.into()))
         }
     }
 
     pub async fn open_uni(&mut self) -> Result<WriteStream, WTError> {
         match self.connect {
             Some(_) => {
-                let stream = UniStream::UNIWEBTRANSPORT.open(&mut self.inner).await?;
+                let stream = UniStream::WEBTRANSPORT.open(&mut self.inner).await?;
                 let ws = WriteStream::open(stream, self.id).await?;
                 Ok(ws)
             }
             None => Ok(self.inner.open_uni().await?.into()),
+        }
+    }
+
+    pub async fn open_bi(&mut self) -> Result<(WriteStream, ReadStream), WTError> {
+        match self.connect {
+            Some(_) => {
+                let (ws, rs) = BiStream::WEBTRANSPORT.open(&mut self.inner).await?;
+                let ws = WriteStream::open(ws, self.id).await?;
+                Ok((ws, rs.into()))
+            }
+            None => {
+                let (ws, rs) = self.inner.open_bi().await?;
+                Ok((ws.into(), rs.into()))
+            }
         }
     }
 
@@ -85,19 +125,27 @@ impl Connection {
     }
 }
 
-type AcceptUni = dyn Future<Output = Result<ReadStream, WTError>> + Send;
-type AcceptBi = dyn Future<Output = Result<(WriteStream, ReadStream), WTError>> + Send;
+type AcceptUni = dyn Stream<Item = Result<quinn::RecvStream, quinn::ConnectionError>> + Send;
+type AcceptBi = dyn Stream<Item = Result<(quinn::SendStream, quinn::RecvStream), quinn::ConnectionError>> + Send;
+type PendingUni = dyn Future<Output = Result<(UniStream, ReadStream), WTError>> + Send + 'static;
+type PendingBi = dyn Future<Output = Result<(BiStream, (WriteStream, ReadStream)), WTError>> + Send + 'static;
 
 /// Accepting a Stream in WebTransport is serious undertaking. H3 Streams may come in the way and annoy us, because they block on read().
 /// Iterating each stream to find the WebTransport will be thwarted by this annoying block_on_read by the H3 Streams.
 /// WTAccept is a least complicated way as far as I know to accept a WebTransport streams.
 /// If you find a better way, send patch
-pub struct UniAccept {
+pub struct WTAccept {
     id: VarInt,
+    #[allow(unused)]
     conn: quinn::Connection,
 
     // Unoredered queue : We add async functions in to it, then it gets resolved whenever we poll them.
-    uni: FuturesUnordered<Pin<Box<AcceptUni>>>,
+    pending_uni: FuturesUnordered<Pin<Box<PendingUni>>>,
+    pending_bi: FuturesUnordered<Pin<Box<PendingBi>>>,
+
+    // Streams that takes conn and accepts a stream every time we poll.
+    uni: Pin<Box<AcceptUni>>,
+    bi: Pin<Box<AcceptBi>>,
 
     // Placeholders for Streams so that it doesn't get dropped
     qpack_encoder: Option<ReadStream>,
@@ -105,105 +153,90 @@ pub struct UniAccept {
     push: Option<ReadStream>,
 }
 
-pub struct BiAccept {
-    id: VarInt,
-    conn: quinn::Connection,
-    bi: FuturesUnordered<Pin<Box<AcceptBi>>>,
-}
-
-impl BiAccept {
+impl WTAccept {
     pub fn new(id: VarInt, conn: quinn::Connection) -> Self {
+        let uni = futures::stream::unfold(conn.clone(), |c| async move { Some((c.accept_uni().await, c)) });
+        let bi = futures::stream::unfold(conn.clone(), |c| async move { Some((c.accept_bi().await, c)) });
+
         Self {
             id,
             conn,
-            bi: FuturesUnordered::new(),
-        }
-    }
-
-    async fn decode_bi((send, recv): (SendStream, RecvStream)) -> Result<(WriteStream, ReadStream), WTError> {
-        let read = ReadStream::accept(recv).await?;
-        Ok((send.into(), read))
-    }
-
-    fn process_bi_stream(&mut self, (write, read): (WriteStream, ReadStream)) -> Result<Option<(WriteStream, ReadStream)>, WTError> {
-        if read.id.unwrap() != self.id {
-            return Err(WTError::ProtocolError("Recevied Stream with Invalid Stream ID"));
-        }
-
-        match read.stype.clone().unwrap() {
-            UniStream::BIWEBTRANSPORT => Ok(Some((write, read))),
-            _ => {
-                tracing::warn!("[Received Bistream with Unknown Stream Header]");
-                Ok(None)
-            }
-        }
-    }
-
-    pub async fn accept_bi(&mut self) -> Result<(WriteStream, ReadStream), WTError> {
-        loop {
-            tokio::select! {
-                qstream = self.conn.accept_bi() => {
-                    tracing::debug!("Bi Accepted");
-                    self.bi.push(Box::pin(Self::decode_bi(qstream?)));
-                },
-                next = self.bi.next() => if let Some(rs) = next { if let Some(bistream) = self.process_bi_stream(rs?)? {
-                    return Ok(bistream)
-                }}
-            }
-        }
-    }
-}
-
-impl UniAccept {
-    pub fn new(id: VarInt, conn: quinn::Connection) -> Self {
-        Self {
-            id,
-            conn,
-            uni: FuturesUnordered::new(),
+            pending_uni: FuturesUnordered::new(),
+            pending_bi: FuturesUnordered::new(),
+            uni: Box::pin(uni),
+            bi: Box::pin(bi),
             qpack_encoder: None,
             qpack_decoder: None,
             push: None,
         }
     }
 
-    fn process_uni_stream(&mut self, rs: ReadStream) -> Result<Option<ReadStream>, WTError> {
-        if rs.id.unwrap() != self.id {
-            return Err(WTError::ProtocolError("Received Stream with Invalid Stream ID"));
+    async fn decode_uni(id: VarInt, mut stream: quinn::RecvStream) -> Result<(UniStream, ReadStream), WTError> {
+        let stype = UniStream(stream.read_varint().await?);
+        let sid = stream.read_varint().await?;
+
+        if sid != id {
+            return Err(WTError::ProtocolError("UniStream Accept : Session ID mismatch"));
         }
-        match rs.stype.clone().unwrap() {
-            UniStream::UNIWEBTRANSPORT => Ok(Some(rs)),
-            UniStream::QPACK_ENCODER => {
-                tracing::debug!("Received QPack ecoder Unistream");
-                self.qpack_encoder = Some(rs);
-                Ok(None)
+
+        Ok((stype, stream.into()))
+    }
+
+    pub fn poll_accept_uni(&mut self, ctx: &mut Context<'_>) -> Poll<Result<ReadStream, WTError>> {
+        loop {
+            if let Poll::Ready(Some(stream)) = self.uni.poll_next_unpin(ctx) {
+                let pending = Self::decode_uni(self.id, stream?);
+                self.pending_uni.push(Box::pin(pending));
             }
-            UniStream::QPACK_DECODER => {
-                tracing::debug!("Received QPack Decoder Unistream");
-                self.qpack_decoder = Some(rs);
-                Ok(None)
-            }
-            UniStream::PUSH => {
-                tracing::debug!("Received H3 Push Unistream");
-                self.push = Some(rs);
-                Ok(None)
-            }
-            _ => {
-                tracing::warn!("Received Uni Stream with Unknown Header");
-                Ok(None)
+
+            let (stype, stream) = match ready!(self.pending_uni.poll_next_unpin(ctx)) {
+                Some(s) => s?,
+                None => return Poll::Pending,
+            };
+
+            match stype {
+                UniStream::WEBTRANSPORT => return Poll::Ready(Ok(stream)),
+                UniStream::QPACK_ENCODER => self.qpack_encoder = Some(stream),
+                UniStream::QPACK_DECODER => self.qpack_decoder = Some(stream),
+                UniStream::PUSH => self.push = Some(stream),
+                _ => {
+                    tracing::warn!("Received Unknown UniStream {:x?}", stype.0.into_inner())
+                }
             }
         }
     }
 
-    /// Blocks until a new uni stream is available on the connection
-    pub async fn accept_uni(&mut self) -> Result<ReadStream, WTError> {
+    async fn decode_bi(id: VarInt, streams: (quinn::SendStream, quinn::RecvStream)) -> Result<(BiStream, (WriteStream, ReadStream)), WTError> {
+        let send = streams.0;
+        let mut recv = streams.1;
+
+        let stype = BiStream(recv.read_varint().await?);
+        let sid = recv.read_varint().await?;
+
+        if sid != id {
+            return Err(WTError::ProtocolError("BiStream Accept : Session ID mismatch"));
+        }
+
+        Ok((stype, (send.into(), recv.into())))
+    }
+
+    pub fn poll_accept_bi(&mut self, ctx: &mut Context<'_>) -> Poll<Result<(WriteStream, ReadStream), WTError>> {
         loop {
-            tokio::select! {
-                qstream = self.conn.accept_uni() => {
-                    self.uni.push(Box::pin(ReadStream::accept(qstream?))); // Push it to the UniStream Futures Queue. Hopefully, it will get resolved and the output shows in the next branch of this select!{} on the next iteration
-                },
-                next = self.uni.next() => if let Some(rs) = next { if let Some(rstream) = self.process_uni_stream(rs?)? {
-                    return Ok(rstream)
-                }}
+            if let Poll::Ready(Some(stream)) = self.bi.poll_next_unpin(ctx) {
+                let pending = Self::decode_bi(self.id, stream?);
+                self.pending_bi.push(Box::pin(pending));
+            }
+
+            let (stype, (ws, rs)) = match ready!(self.pending_bi.poll_next_unpin(ctx)) {
+                Some(s) => s?,
+                None => return Poll::Pending,
+            };
+
+            match stype {
+                BiStream::WEBTRANSPORT => return Poll::Ready(Ok((ws, rs))),
+                _ => {
+                    tracing::debug!("Received BiStream with Unknown Header : {:x?}", stype.0.into_inner());
+                }
             }
         }
     }
