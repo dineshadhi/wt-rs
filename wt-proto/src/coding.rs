@@ -23,7 +23,7 @@ pub enum CodingError {
 /// This convinient extension helps decoding the VarInt directly from a quinn::RecvStream and a Buf.
 #[async_trait]
 pub trait VarIntAsyncExt {
-    /// Reads VarInt
+    /// Reads VarInt Async
     async fn read_varint(&mut self) -> Result<VarInt, CodingError>;
 }
 
