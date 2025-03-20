@@ -1,6 +1,5 @@
-use std::{marker::PhantomData, net::SocketAddr};
-
 use quinn::crypto::rustls::HandshakeData;
+use std::{marker::PhantomData, net::SocketAddr};
 use wt_proto::h3;
 
 use crate::{Connection, WTError};
@@ -17,7 +16,7 @@ pub struct Endpoint<S = Init> {
 impl Endpoint<Init> {
     pub fn server(config: quinn::ServerConfig, addr: SocketAddr) -> Endpoint<Server> {
         let e = quinn::Endpoint::server(config, addr).unwrap();
-        tracing::info!("New WebTransport Server : {:?}", addr);
+        tracing::info!("WebTransport Server Listening : {:?}", addr);
         Endpoint {
             inner: e,
             state: PhantomData,
@@ -36,8 +35,10 @@ impl Endpoint<Init> {
 
 impl Endpoint<Server> {
     pub async fn accept(&mut self) -> Result<Connection, WTError> {
-        let incoming = self.inner.accept().await.unwrap();
-        let conn = incoming.accept()?.await?;
+        let conn = match self.inner.accept().await {
+            Some(i) => i.await?,
+            None => return Err(WTError::AcceptError("Endpoint Accept Failed - conn closed probably")),
+        };
 
         let hdata = match conn.handshake_data() {
             Some(data) => data,
@@ -58,8 +59,7 @@ impl Endpoint<Server> {
 
 impl Endpoint<Client> {
     pub async fn connect(&mut self, addr: SocketAddr, server_name: &str) -> Result<Connection, WTError> {
-        let conn = self.inner.connect(addr, server_name).unwrap().await?;
-        let conn = Connection::open(conn).await?;
-        Ok(conn)
+        let conn = self.inner.connect(addr, server_name)?.await?;
+        Connection::open(conn).await
     }
 }

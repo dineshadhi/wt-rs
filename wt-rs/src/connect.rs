@@ -1,7 +1,8 @@
-use quinn::VarInt;
-use wt_proto::h3::{self, qpack};
-
 use crate::WTError;
+use wt_proto::{
+    coding::VarInt,
+    h3::{self, qpack},
+};
 
 pub struct Connect {
     inner: h3::connect::Request,
@@ -33,7 +34,8 @@ impl Connect {
     }
 
     pub fn session_id(&self) -> VarInt {
-        VarInt::from(self.inner.writer.id())
+        let val = quinn::VarInt::from(self.inner.writer.id());
+        VarInt::from_u64(val.into_inner()).unwrap()
     }
 
     pub fn headers(&self) -> &qpack::Headers {

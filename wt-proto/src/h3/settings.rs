@@ -1,11 +1,11 @@
-use super::H3Error;
 use crate::{
-    coding::{VarIntExt, VarIntMutExt},
+    coding::{VarInt, VarIntExt, VarIntMutExt},
     h3::{frame::Frame, streams::UniStream},
 };
 use bytes::{Buf, Bytes, BytesMut};
-use quinn::VarInt;
 use std::{collections::HashMap, fmt::Debug};
+
+use super::H3Error;
 
 #[derive(PartialEq, Eq, Hash, Clone)]
 pub struct Setting(pub VarInt);
@@ -94,12 +94,11 @@ impl Settings {
         Self { inner }
     }
 
-    pub async fn decode(data: &mut Bytes, len: usize) -> Result<Self, H3Error> {
+    pub fn decode(data: &mut Bytes, len: usize) -> Result<Self, H3Error> {
         let mut settings = Settings::default();
         let mut data = data.split_to(len);
 
         while data.has_remaining() {
-            dbg!(data.len());
             let setting = Setting(data.read_varint()?);
             let value = data.read_varint()?.into_inner() as u32;
 
@@ -178,7 +177,7 @@ impl Settings {
             return Err(H3Error::SettingsError);
         }
 
-        let settings = Settings::decode(&mut data, len).await?;
+        let settings = Settings::decode(&mut data, len)?;
 
         tracing::debug!("[Received Settings][{:?}]", settings);
 

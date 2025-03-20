@@ -1,6 +1,6 @@
-use bytes::BytesMut;
-use quinn::{Chunk, RecvStream, SendStream, VarInt};
-use wt_proto::coding::VarIntMutExt;
+use bytes::{Bytes, BytesMut};
+use quinn::{Chunk, ReadExactError, RecvStream, SendStream};
+use wt_proto::coding::{CodingError, VarInt, VarIntAsyncExt, VarIntMutExt};
 
 use crate::WTError;
 
@@ -34,6 +34,16 @@ impl ReadStream {
     /// Reads a chunk of data from the quinn's API.
     pub async fn read_chunk(&mut self) -> Result<Option<Chunk>, WTError> {
         Ok(self.inner.read_chunk(usize::MAX, true).await?)
+    }
+
+    pub async fn read_varint(&mut self) -> Result<VarInt, CodingError> {
+        self.inner.read_varint().await
+    }
+
+    pub async fn read_exact_len(&mut self, len: usize) -> Result<Bytes, ReadExactError> {
+        let mut buffer = vec![0; len];
+        self.inner.read_exact(&mut buffer[..]).await?;
+        Ok(Bytes::from(buffer))
     }
 }
 

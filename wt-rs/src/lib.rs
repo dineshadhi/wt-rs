@@ -28,6 +28,9 @@ pub enum WTError {
     #[error("WT Connection Eror {0}")]
     ConnectionError(#[from] quinn::ConnectionError),
 
+    #[error("ConnectError {0}")]
+    ConnectError(#[from] quinn::ConnectError),
+
     #[error("Send Datagram Error {0}")]
     SendDatagramError(#[from] SendDatagramError),
 

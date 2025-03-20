@@ -1,6 +1,8 @@
-use crate::{coding::VarIntAsyncExt, coding::VarIntMutExt, h3::H3Error};
+use crate::{
+    coding::{VarInt, VarIntAsyncExt, VarIntMutExt},
+    h3::H3Error,
+};
 use bytes::{BufMut, BytesMut};
-use quinn::VarInt;
 
 #[derive(PartialEq, Eq, Debug, Clone)]
 pub struct UniStream(pub VarInt);

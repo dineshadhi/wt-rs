@@ -1,6 +1,5 @@
-use bytes::BytesMut;
-
 use crate::h3::frame::Frame;
+use bytes::BytesMut;
 
 use super::{qpack, H3Error};
 

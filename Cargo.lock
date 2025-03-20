@@ -1457,7 +1457,6 @@ dependencies = [
  "async-trait",
  "bytes",
  "quinn",
- "quinn-proto",
  "thiserror 2.0.12",
  "tracing",
 ]

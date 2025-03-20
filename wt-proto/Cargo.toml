@@ -3,8 +3,12 @@ name = "wt-proto"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+default = ["h3"]
+h3 = ["coding"]
+coding = [] # Only contains the VarInt and its extensions
+
 [dependencies]
-quinn-proto = {"workspace" = true}
 quinn = {"workspace" = true }
 thiserror = {"workspace" = true}
 bytes = {"workspace" = true}

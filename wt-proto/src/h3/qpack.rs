@@ -406,9 +406,7 @@ impl StaticTable {
             ("range", "bytes=0-") => Some(55),
             ("strict-transport-security", "max-age=31536000") => Some(56),
             ("strict-transport-security", "max-age=31536000; includesubdomains") => Some(57),
-            ("strict-transport-security", "max-age=31536000; includesubdomains; preload") => {
-                Some(58)
-            }
+            ("strict-transport-security", "max-age=31536000; includesubdomains; preload") => Some(58),
             ("vary", "accept-encoding") => Some(59),
             ("vary", "origin") => Some(60),
             ("x-content-type-options", "nosniff") => Some(61),
@@ -435,10 +433,7 @@ impl StaticTable {
             ("access-control-request-method", "post") => Some(82),
             ("alt-svc", "clear") => Some(83),
             ("authorization", "") => Some(84),
-            (
-                "content-security-policy",
-                "script-src 'none'; object-src 'none'; base-uri 'none'",
-            ) => Some(85),
+            ("content-security-policy", "script-src 'none'; object-src 'none'; base-uri 'none'") => Some(85),
             ("early-data", "1") => Some(86),
             ("expect-ct", "") => Some(87),
             ("forwarded", "") => Some(88),
@@ -573,14 +568,8 @@ const PREDEFINED_HEADERS: [(&str, &str); 99] = [
     ("content-type", "text/plain;charset=utf-8"),
     ("range", "bytes=0-"),
     ("strict-transport-security", "max-age=31536000"),
-    (
-        "strict-transport-security",
-        "max-age=31536000; includesubdomains",
-    ),
-    (
-        "strict-transport-security",
-        "max-age=31536000; includesubdomains; preload",
-    ),
+    ("strict-transport-security", "max-age=31536000; includesubdomains"),
+    ("strict-transport-security", "max-age=31536000; includesubdomains; preload"),
     ("vary", "accept-encoding"),
     ("vary", "origin"),
     ("x-content-type-options", "nosniff"),
@@ -607,10 +596,7 @@ const PREDEFINED_HEADERS: [(&str, &str); 99] = [
     ("access-control-request-method", "post"),
     ("alt-svc", "clear"),
     ("authorization", ""),
-    (
-        "content-security-policy",
-        "script-src 'none'; object-src 'none'; base-uri 'none'",
-    ),
+    ("content-security-policy", "script-src 'none'; object-src 'none'; base-uri 'none'"),
     ("early-data", "1"),
     ("expect-ct", ""),
     ("forwarded", ""),

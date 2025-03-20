@@ -13,23 +13,34 @@ use crate::{
 };
 use bytes::Bytes;
 use futures::{future::poll_fn, ready, stream::FuturesUnordered, Stream, StreamExt};
-use quinn::VarInt;
 use wt_proto::{
-    coding::VarIntAsyncExt,
+    coding::{VarInt, VarIntAsyncExt},
     h3::streams::{BiStream, UniStream},
 };
 
 #[derive(Clone)]
 pub struct Connection {
     #[allow(dead_code)]
-    id: VarInt,
+    id: Option<VarInt>,
     #[allow(dead_code)]
     inner: quinn::Connection,
     #[allow(dead_code)]
     settings: Option<Arc<Settings>>,
     #[allow(dead_code)]
     connect: Option<Arc<Connect>>,
-    accept: Arc<Mutex<WTAccept>>,
+    accept: Option<Arc<Mutex<WTAccept>>>,
+}
+
+impl From<quinn::Connection> for Connection {
+    fn from(value: quinn::Connection) -> Self {
+        Self {
+            id: None,
+            inner: value,
+            settings: None,
+            connect: None,
+            accept: None,
+        }
+    }
 }
 
 impl Connection {
@@ -42,11 +53,11 @@ impl Connection {
         let accept = WTAccept::new(id, conn.clone());
 
         let conn = Connection {
-            id,
+            id: Some(id),
             inner: conn,
             settings: Some(Arc::new(settings)),
             connect: Some(Arc::new(connect)),
-            accept: Arc::new(Mutex::new(accept)),
+            accept: Some(Arc::new(Mutex::new(accept))),
         };
 
         Ok(conn)
@@ -60,11 +71,11 @@ impl Connection {
         let accept = WTAccept::new(id, conn.clone());
 
         let conn = Connection {
-            id,
+            id: Some(id),
             inner: conn,
             settings: Some(Arc::new(settings)),
             connect: Some(Arc::new(connect)),
-            accept: Arc::new(Mutex::new(accept)),
+            accept: Some(Arc::new(Mutex::new(accept))),
         };
 
         Ok(conn)
@@ -72,21 +83,23 @@ impl Connection {
 
     /// Accepts a Unidirectional Stream.
     pub async fn accept_uni(&mut self) -> Result<ReadStream, WTError> {
-        if self.connect.is_some() {
-            poll_fn(|ctx| self.accept.lock().unwrap().poll_accept_uni(ctx)).await
-        } else {
-            let stream = self.inner.accept_uni().await?;
-            Ok(stream.into())
+        match &self.accept {
+            Some(accept) => poll_fn(|ctx| accept.lock().unwrap().poll_accept_uni(ctx)).await,
+            None => {
+                let stream = self.inner.accept_uni().await?;
+                Ok(stream.into())
+            }
         }
     }
 
     /// Accepts a Bidirectional Stream.
     pub async fn accept_bi(&mut self) -> Result<(WriteStream, ReadStream), WTError> {
-        if self.connect.is_some() {
-            poll_fn(|ctx| self.accept.lock().unwrap().poll_accept_bi(ctx)).await
-        } else {
-            let (send, recv) = self.inner.accept_bi().await?;
-            Ok((send.into(), recv.into()))
+        match &self.accept {
+            Some(accept) => poll_fn(|ctx| accept.lock().unwrap().poll_accept_bi(ctx)).await,
+            None => {
+                let (send, recv) = self.inner.accept_bi().await?;
+                Ok((send.into(), recv.into()))
+            }
         }
     }
 
@@ -94,7 +107,7 @@ impl Connection {
         match self.connect {
             Some(_) => {
                 let stream = UniStream::WEBTRANSPORT.open(&mut self.inner).await?;
-                let ws = WriteStream::open(stream, self.id).await?;
+                let ws = WriteStream::open(stream, self.id.unwrap()).await?;
                 Ok(ws)
             }
             None => Ok(self.inner.open_uni().await?.into()),
@@ -105,7 +118,7 @@ impl Connection {
         match self.connect {
             Some(_) => {
                 let (ws, rs) = BiStream::WEBTRANSPORT.open(&mut self.inner).await?;
-                let ws = WriteStream::open(ws, self.id).await?;
+                let ws = WriteStream::open(ws, self.id.unwrap()).await?;
                 Ok((ws, rs.into()))
             }
             None => {
@@ -145,8 +158,8 @@ pub struct WTAccept {
     conn: quinn::Connection,
 
     // Unoredered queue : We add async functions in to it, then it gets resolved whenever we poll them.
-    pending_uni: FuturesUnordered<Pin<Box<PendingUni>>>,
-    pending_bi: FuturesUnordered<Pin<Box<PendingBi>>>,
+    drained_uni: FuturesUnordered<Pin<Box<PendingUni>>>,
+    drained_bi: FuturesUnordered<Pin<Box<PendingBi>>>,
 
     // Streams that takes conn and accepts a stream every time we poll.
     uni: Pin<Box<AcceptUni>>,
@@ -165,14 +178,15 @@ pub struct WTAccept {
 
 impl WTAccept {
     pub fn new(id: VarInt, conn: quinn::Connection) -> Self {
+        // Create Futures::Stream of Accepted Streams from the Quic Connection
         let uni = futures::stream::unfold(conn.clone(), |c| async move { Some((c.accept_uni().await, c)) });
         let bi = futures::stream::unfold(conn.clone(), |c| async move { Some((c.accept_bi().await, c)) });
 
         Self {
             id,
             conn,
-            pending_uni: FuturesUnordered::new(),
-            pending_bi: FuturesUnordered::new(),
+            drained_uni: FuturesUnordered::new(),
+            drained_bi: FuturesUnordered::new(),
             uni: Box::pin(uni),
             bi: Box::pin(bi),
             qpack_encoder: None,
@@ -198,7 +212,7 @@ impl WTAccept {
             match s {
                 Some(stream) => {
                     let pending = Self::decode_uni(self.id, stream?);
-                    self.pending_uni.push(Box::pin(pending));
+                    self.drained_uni.push(Box::pin(pending));
                 }
                 // Happens when session is terminated
                 None => return Poll::Ready(Err(WTError::AcceptError("UniStream drain failed : session terminated probably"))),
@@ -211,7 +225,7 @@ impl WTAccept {
 
     // Polls the next available drained stream in the FutureQueue and returns it
     fn select_uni(&mut self, ctx: &mut Context<'_>) -> Poll<SelectedUni> {
-        if let Poll::Ready(s) = self.pending_uni.poll_next_unpin(ctx) {
+        if let Poll::Ready(s) = self.drained_uni.poll_next_unpin(ctx) {
             return match s {
                 Some(streams) => Poll::Ready(Ok(streams?)),
                 None => Poll::Pending,
@@ -266,7 +280,7 @@ impl WTAccept {
             match s {
                 Some(streams) => {
                     let pending = Self::decode_bi(self.id, streams?);
-                    self.pending_bi.push(Box::pin(pending));
+                    self.drained_bi.push(Box::pin(pending));
                 }
                 // Happens when session is terminated
                 None => return Poll::Ready(Err(WTError::AcceptError("BiStream drain failed : session terminated probably"))),
@@ -279,7 +293,7 @@ impl WTAccept {
 
     // Polls the next available drained stream in the FutureQueue and returns it
     fn select_bi(&mut self, ctx: &mut Context<'_>) -> Poll<SelectedBi> {
-        if let Poll::Ready(s) = self.pending_bi.poll_next_unpin(ctx) {
+        if let Poll::Ready(s) = self.drained_bi.poll_next_unpin(ctx) {
             return match s {
                 Some(streams) => Poll::Ready(Ok(streams?)),
                 None => Poll::Pending,

@@ -1,7 +1,32 @@
 use async_trait::async_trait;
 use bytes::{Buf, BufMut};
-use quinn::{ReadExactError, VarInt, VarIntBoundsExceeded};
+use quinn::ReadExactError;
 use thiserror::Error;
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
+pub struct VarInt(pub u64);
+
+impl VarInt {
+    pub fn from_u64(x: u64) -> Result<Self, CodingError> {
+        if x < 2u64.pow(62) {
+            Ok(Self(x))
+        } else {
+            Err(CodingError::VarIntBoundsExceeded)
+        }
+    }
+
+    pub const fn from_u32(x: u32) -> Self {
+        Self(x as u64)
+    }
+
+    pub const fn into_inner(&self) -> u64 {
+        self.0
+    }
+
+    pub const fn as_usize(&self) -> usize {
+        self.0 as usize
+    }
+}
 
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum CodingError {
@@ -11,8 +36,8 @@ pub enum CodingError {
     #[error("VarInt Malformed. Tag - {0:#X}")]
     VarIntMalformed(u8),
 
-    #[error("VarInt Bounds Exceeded")]
-    VarIntBoundsExceeded(#[from] VarIntBoundsExceeded),
+    #[error("Bounds Exceeded")]
+    VarIntBoundsExceeded,
 
     #[error("UnexpectedEnd : Not Enough Data to Decode VarInt")]
     UnexpectedEnd,
@@ -124,7 +149,7 @@ impl<B: Buf> VarIntExt for B {
             }
         };
 
-        Ok(VarInt::from_u64(val)?)
+        VarInt::from_u64(val)
     }
 }
 

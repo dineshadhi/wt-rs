@@ -1,8 +1,6 @@
+use crate::coding::{VarInt, VarIntAsyncExt, VarIntMutExt};
 use bytes::{BufMut, Bytes};
-use quinn::VarInt;
 use std::fmt::Debug;
-
-use crate::coding::{VarIntAsyncExt, VarIntMutExt};
 
 use super::H3Error;
 
@@ -70,7 +68,6 @@ impl Frame {
             v.read_exact(data.as_mut_slice()).await?;
 
             if ftype.is_grease() {
-                tracing::debug!("Got Grease Frame");
                 continue;
             }
 
