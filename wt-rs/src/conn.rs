@@ -237,27 +237,26 @@ impl WTAccept {
 
     // A convinient poll wrapper to loop through all the blocking H3 streams and find the WebTransport Stream
     pub fn poll_accept_uni(&mut self, ctx: &mut Context<'_>) -> Poll<Result<ReadStream, WTError>> {
-        // Wait for all Unistreams to be drained in to Futures Queue. No worries, if there is no streams to be accepted, it simply returns
-        ready!(self.drain_uni(ctx))?;
+        loop {
+            // Wait for all Unistreams to be drained in to Futures Queue. No worries, if there is no streams to be accepted, it simply returns
+            ready!(self.drain_uni(ctx))?;
 
-        // Then search for a stream that is readable and ready
-        let (stype, stream) = ready!(self.select_uni(ctx))?;
+            // Then search for a stream that is readable and ready
+            let (stype, stream) = ready!(self.select_uni(ctx))?;
 
-        match stype {
-            // Return if its WebTransports.
-            UniStream::WEBTRANSPORT => return Poll::Ready(Ok(stream)),
-            // Otherwise, its a H3 stream probably. So, simply store it to prevent dropping.
-            UniStream::QPACK_ENCODER => self.qpack_encoder = Some(stream),
-            UniStream::QPACK_DECODER => self.qpack_decoder = Some(stream),
-            UniStream::PUSH => self.push = Some(stream),
-            _ => {
-                // Drop a warning, if we get a weird header.
-                tracing::warn!("Received Unknown UniStream {:x?}", stype.0.into_inner())
-            }
-        };
-
-        // Signal to be polled again, because we haven't found the WebTransport Stream yet
-        Poll::Pending
+            match stype {
+                // Return if its WebTransports.
+                UniStream::WEBTRANSPORT => return Poll::Ready(Ok(stream)),
+                // Otherwise, its a H3 stream probably. So, simply store it to prevent dropping.
+                UniStream::QPACK_ENCODER => self.qpack_encoder = Some(stream),
+                UniStream::QPACK_DECODER => self.qpack_decoder = Some(stream),
+                UniStream::PUSH => self.push = Some(stream),
+                _ => {
+                    // Drop a warning, if we get a weird header.
+                    tracing::warn!("Received Unknown UniStream {:x?}", stype.0.into_inner())
+                }
+            };
+        }
     }
 
     async fn decode_bi(id: VarInt, streams: (quinn::SendStream, quinn::RecvStream)) -> SelectedBi {
@@ -305,19 +304,20 @@ impl WTAccept {
 
     // A convinient poll wrapper to loop through all the blocking H3 streams and find the WebTransport Stream
     pub fn poll_accept_bi(&mut self, ctx: &mut Context<'_>) -> Poll<Result<(WriteStream, ReadStream), WTError>> {
-        // Wait for all Bistreams to be drained in to Futures Queue. No worries, if there is no streams to be accepted, it simply returns
-        ready!(self.drain_bi(ctx))?;
+        loop {
+            // Wait for all Bistreams to be drained in to Futures Queue. No worries, if there is no streams to be accepted, it simply returns
+            ready!(self.drain_bi(ctx))?;
 
-        // Then search for a stream that is readable and ready
-        let (stype, (ws, rs)) = ready!(self.select_bi(ctx))?;
+            // Then search for a stream that is readable and ready
+            let (stype, (ws, rs)) = ready!(self.select_bi(ctx))?;
 
-        match stype {
-            BiStream::WEBTRANSPORT => Poll::Ready(Ok((ws, rs))),
-            _ => {
-                // Drop a warning, if we get a weird header
-                tracing::warn!("Received BiStream with Unknown Header : {:x?}", stype.0.into_inner());
-                // Signal to be polled again, because we haven't found the WebTransport Stream yet
-                Poll::Pending
+            match stype {
+                BiStream::WEBTRANSPORT => return Poll::Ready(Ok((ws, rs))),
+                _ => {
+                    // Drop a warning, if we get a weird header
+                    tracing::warn!("Received BiStream with Unknown Header : {:x?}", stype.0.into_inner());
+                    // Signal to be polled again, because we haven't found the WebTransport Stream yet
+                }
             }
         }
     }
